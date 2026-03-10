@@ -1,0 +1,26 @@
+# Kotlin/Gradle
+.gradle/
+.kotlin/
+build/
+out/
+local.properties
+
+# IDE
+.idea/
+*.iml
+
+# Android
+captures/
+.externalNativeBuild/
+.cxx/
+
+# iOS/Xcode
+iosApp/build/
+iosApp/DerivedData/
+iosApp/**/*.xcodeproj/xcuserdata/
+iosApp/**/*.xcworkspace/xcuserdata/
+iosApp/**/*.xcuserstate
+
+# OS
+.DS_Store
+Thumbs.db
