@@ -6,5 +6,5 @@ actual fun logSdk(
     tag: String,
     message: String,
 ) {
-    Log.d(tag, message)
+    Log.i(tag, message)
 }

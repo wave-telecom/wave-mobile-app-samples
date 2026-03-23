@@ -1,18 +1,25 @@
 package br.com.wave.sample
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import br.com.wave.flow_wrapper_kmp.FlowWrapper
 import br.com.wave.flow_wrapper_kmp.RenderBlock
 import br.com.wave.flow_wrapper_kmp.SDKEvent
@@ -20,7 +27,9 @@ import br.com.wave.flow_wrapper_kmp.SDKEvent
 private const val SDK_TAG = "WaveSdkSample"
 private const val SAMPLE_API_KEY = "YOUR_API_KEY"
 private const val SAMPLE_MSISDN = "+5511999999999"
-private const val ENTRY_FLOW_ID = "subscription-management"
+private const val INITIAL_FLOW_ID = "home"
+private const val NAVBAR_FLOW_ID = "navbar"
+private val NAVBAR_HEIGHT = 88.dp
 
 private sealed interface SdkHostAction {
     data class Navigate(val componentId: String) : SdkHostAction
@@ -43,6 +52,14 @@ private fun WaveSdkSampleApp() {
     var startupError by remember { mutableStateOf<String?>(null) }
     val componentStack = remember { mutableStateListOf<String>() }
     val currentComponentId = componentStack.lastOrNull()
+    val currentEntryId = currentComponentId ?: INITIAL_FLOW_ID
+
+    NativeBackHandler(enabled = currentComponentId != null) {
+        popComponentFromHostStack(
+            componentStack = componentStack,
+            reason = "native back button",
+        )
+    }
 
     LaunchedEffect(Unit) {
         runCatching {
@@ -69,30 +86,61 @@ private fun WaveSdkSampleApp() {
         return
     }
 
-    if (currentComponentId == null) {
-        RenderBlock(
-            flowId = ENTRY_FLOW_ID,
-            modifier = Modifier.fillMaxSize(),
-            onEvent = { event ->
-                handleSdkEvent(
-                    event = event,
-                    currentComponentId = ENTRY_FLOW_ID,
-                    componentStack = componentStack,
-                )
-            },
-        )
-    } else {
-        RenderBlock(
-            componentId = currentComponentId,
-            modifier = Modifier.fillMaxSize(),
-            onEvent = { event ->
-                handleSdkEvent(
-                    event = event,
-                    currentComponentId = currentComponentId,
-                    componentStack = componentStack,
-                )
-            },
-        )
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(bottom = NAVBAR_HEIGHT),
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                key(currentEntryId) {
+                    if (currentComponentId == null) {
+                        RenderBlock(
+                            flowId = INITIAL_FLOW_ID,
+                            modifier = Modifier.fillMaxSize(),
+                            onEvent = { event ->
+                                handleSdkEvent(
+                                    event = event,
+                                    currentComponentId = currentEntryId,
+                                    componentStack = componentStack,
+                                )
+                            },
+                        )
+                    } else {
+                        RenderBlock(
+                            componentId = currentComponentId,
+                            modifier = Modifier.fillMaxSize(),
+                            onEvent = { event ->
+                                handleSdkEvent(
+                                    event = event,
+                                    currentComponentId = currentComponentId,
+                                    componentStack = componentStack,
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
+        key(NAVBAR_FLOW_ID) {
+            RenderBlock(
+                flowId = NAVBAR_FLOW_ID,
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth()
+                        .height(NAVBAR_HEIGHT),
+                onEvent = { event ->
+                    handleSdkEvent(
+                        event = event,
+                        currentComponentId = currentEntryId,
+                        componentStack = componentStack,
+                    )
+                },
+            )
+        }
     }
 }
 
@@ -125,10 +173,9 @@ private fun handleSdkEvent(
                 }
 
                 SdkHostAction.Back -> {
-                    val popped = componentStack.removeLastOrNull()
-                    logSdk(
-                        SDK_TAG,
-                        "Host back requested by SDK, popped component=$popped stackSize=${componentStack.size}",
+                    popComponentFromHostStack(
+                        componentStack = componentStack,
+                        reason = "SDK callback",
                     )
                 }
 
@@ -185,6 +232,17 @@ private fun resolveSdkHostAction(
     }
 
     return SdkHostAction.None
+}
+
+private fun popComponentFromHostStack(
+    componentStack: MutableList<String>,
+    reason: String,
+) {
+    val popped = componentStack.removeLastOrNull()
+    logSdk(
+        SDK_TAG,
+        "Host back requested by $reason, popped component=$popped stackSize=${componentStack.size}",
+    )
 }
 
 private fun extractJsonObjectField(json: String, fieldName: String): String? {
