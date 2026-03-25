@@ -39,7 +39,7 @@ kotlin {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.androidx.lifecycle.viewmodelCompose)
             implementation(libs.androidx.lifecycle.runtimeCompose)
-            implementation("br.com.wave:flow-wrapper-kmp:0.5.6")
+            implementation("br.com.wave:flow-wrapper-kmp:0.5.7")
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
