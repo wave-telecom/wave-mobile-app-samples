@@ -1,6 +1,8 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
+val flowWrapperVersion = "0.5.7"
+
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.androidApplication)
@@ -39,13 +41,34 @@ kotlin {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.androidx.lifecycle.viewmodelCompose)
             implementation(libs.androidx.lifecycle.runtimeCompose)
-            implementation("br.com.wave:flow-wrapper-kmp:0.5.7")
+            implementation("br.com.wave:flow-wrapper-kmp:$flowWrapperVersion")
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
         }
     }
 }
+
+val generateFlowWrapperVersion by tasks.registering {
+    val outputDir = layout.buildDirectory.dir("generated/source/flowWrapperVersion/commonMain/kotlin/br/com/wave/sample")
+    inputs.property("flowWrapperVersion", flowWrapperVersion)
+    outputs.dir(outputDir)
+
+    doLast {
+        val outputFile = outputDir.get().file("FlowWrapperVersion.kt").asFile
+        val version = inputs.properties["flowWrapperVersion"] as String
+        outputFile.parentFile.mkdirs()
+        outputFile.writeText(
+            """
+            package br.com.wave.sample
+
+            const val FLOW_WRAPPER_VERSION = "$version"
+            """.trimIndent(),
+        )
+    }
+}
+
+kotlin.sourceSets.getByName("commonMain").kotlin.srcDir(generateFlowWrapperVersion)
 
 android {
     namespace = "br.com.wave.sample"

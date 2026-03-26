@@ -2,6 +2,8 @@ package br.com.wave.sample
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -44,6 +46,7 @@ private val TEST_MSISDN_OPTIONS = listOf(
     "5516748497",
     "5529478626",
     "5530188033",
+    "5540544448",
     "5554007347",
     "5564764190",
     "5580651242",
@@ -133,74 +136,99 @@ private fun WaveSdkSampleApp() {
                     .fillMaxSize()
                     .padding(top = renderContentPadding),
         ) {
-            when {
-                startupError != null -> Text(
-                    text = "Initialization error: $startupError",
-                    modifier = Modifier.align(Alignment.Center),
-                )
+            val reproduceRenderError = true
+            if (reproduceRenderError) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    RenderBlock(
+                        modifier = Modifier.weight(1f),
+                        componentId = null,
+                        flowId = INITIAL_FLOW_ID,
+                        onEvent = logRenderEvent("home"),
+                    )
+                    RenderBlock(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(NAVBAR_HEIGHT),
+                        componentId = null,
+                        flowId = NAVBAR_FLOW_ID,
+                        onEvent = logRenderEvent("navbar"),
+                    )
+                }
+            } else {
+                when {
+                    startupError != null -> Text(
+                        text = "Initialization error: $startupError",
+                        modifier = Modifier.align(Alignment.Center),
+                    )
 
-                !sdkStarted -> Box(modifier = Modifier.fillMaxSize())
-                else -> key(msisdnWithPrefix) {
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        Column(
-                            modifier =
-                                Modifier
-                                    .fillMaxSize()
-                                    .padding(bottom = NAVBAR_HEIGHT),
-                        ) {
-                            Box(modifier = Modifier.fillMaxSize()) {
-                                key(currentEntryId) {
-                                    if (currentComponentId == null) {
-                                        RenderBlock(
-                                            flowId = INITIAL_FLOW_ID,
-                                            modifier = Modifier.fillMaxSize(),
-                                            onEvent = { event ->
-                                                handleSdkEvent(
-                                                    event = event,
-                                                    currentComponentId = currentEntryId,
-                                                    componentStack = componentStack,
-                                                )
-                                            },
-                                        )
-                                    } else {
-                                        RenderBlock(
-                                            componentId = currentComponentId,
-                                            modifier = Modifier.fillMaxSize(),
-                                            onEvent = { event ->
-                                                handleSdkEvent(
-                                                    event = event,
-                                                    currentComponentId = currentComponentId,
-                                                    componentStack = componentStack,
-                                                )
-                                            },
-                                        )
+                    !sdkStarted -> Box(modifier = Modifier.fillMaxSize())
+                    else -> key(msisdnWithPrefix) {
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            Column(
+                                modifier =
+                                    Modifier
+                                        .fillMaxSize()
+                                        .padding(bottom = NAVBAR_HEIGHT),
+                            ) {
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    key(currentEntryId) {
+                                        if (currentComponentId == null) {
+                                            RenderBlock(
+                                                flowId = INITIAL_FLOW_ID,
+                                                modifier = Modifier.fillMaxSize(),
+                                                onEvent = { event ->
+                                                    handleSdkEvent(
+                                                        event = event,
+                                                        currentComponentId = currentEntryId,
+                                                        componentStack = componentStack,
+                                                    )
+                                                },
+                                            )
+                                        } else {
+                                            RenderBlock(
+                                                componentId = currentComponentId,
+                                                modifier = Modifier.fillMaxSize(),
+                                                onEvent = { event ->
+                                                    handleSdkEvent(
+                                                        event = event,
+                                                        currentComponentId = currentComponentId,
+                                                        componentStack = componentStack,
+                                                    )
+                                                },
+                                            )
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        key(NAVBAR_FLOW_ID) {
-                            RenderBlock(
-                                flowId = NAVBAR_FLOW_ID,
-                                modifier =
-                                    Modifier
-                                        .align(Alignment.BottomStart)
-                                        .fillMaxWidth()
-                                        .height(NAVBAR_HEIGHT),
-                                onEvent = { event ->
-                                    handleSdkEvent(
-                                        event = event,
-                                        currentComponentId = currentEntryId,
-                                        componentStack = componentStack,
-                                    )
-                                },
-                            )
+                            key(NAVBAR_FLOW_ID) {
+                                RenderBlock(
+                                    flowId = NAVBAR_FLOW_ID,
+                                    modifier =
+                                        Modifier
+                                            .align(Alignment.BottomStart)
+                                            .fillMaxWidth()
+                                            .height(NAVBAR_HEIGHT),
+                                    onEvent = { event ->
+                                        handleSdkEvent(
+                                            event = event,
+                                            currentComponentId = currentEntryId,
+                                            componentStack = componentStack,
+                                        )
+                                    },
+                                )
+                            }
                         }
                     }
                 }
             }
         }
     }
+}
+
+private fun logRenderEvent(flowId: String): (SDKEvent) -> Unit = { event ->
+    logSdk(SDK_TAG, "$flowId event=${event::class.simpleName}")
 }
 
 @Composable
@@ -279,11 +307,22 @@ private fun MsisdnSelectionBox(
                 }
             }
 
-            Text(
-                text = "MSISDN atual: +$MSISDN_PREFIX$selectedMsisdn",
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(top = 4.dp),
-            )
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = "MSISDN atual: +$MSISDN_PREFIX$selectedMsisdn",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    text = "SDK v$FLOW_WRAPPER_VERSION",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
 }
 
