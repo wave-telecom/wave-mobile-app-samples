@@ -634,17 +634,7 @@ private fun popComponentFromHostStack(
 }
 
 private fun extractJsonObjectField(json: String, fieldName: String): String? {
-    val quotedFieldName = "\"$fieldName\""
-    val fieldStart = json.indexOf(quotedFieldName)
-    if (fieldStart < 0) return null
-
-    val colonIndex = json.indexOf(':', startIndex = fieldStart + quotedFieldName.length)
-    if (colonIndex < 0) return null
-
-    var valueStart = colonIndex + 1
-    while (valueStart < json.length && json[valueStart].isWhitespace()) {
-        valueStart++
-    }
+    val valueStart = findJsonFieldValueStart(json, fieldName) ?: return null
     if (valueStart >= json.length || json[valueStart] != '{') return null
 
     var depth = 0
@@ -673,17 +663,7 @@ private fun extractJsonObjectField(json: String, fieldName: String): String? {
 }
 
 private fun extractJsonStringField(json: String, fieldName: String): String? {
-    val quotedFieldName = "\"$fieldName\""
-    val fieldStart = json.indexOf(quotedFieldName)
-    if (fieldStart < 0) return null
-
-    val colonIndex = json.indexOf(':', startIndex = fieldStart + quotedFieldName.length)
-    if (colonIndex < 0) return null
-
-    var valueStart = colonIndex + 1
-    while (valueStart < json.length && json[valueStart].isWhitespace()) {
-        valueStart++
-    }
+    val valueStart = findJsonFieldValueStart(json, fieldName) ?: return null
     if (valueStart >= json.length || json[valueStart] != '"') return null
 
     val result = StringBuilder()
@@ -705,4 +685,76 @@ private fun extractJsonStringField(json: String, fieldName: String): String? {
     }
 
     return null
+}
+
+private fun findJsonFieldValueStart(json: String, fieldName: String): Int? {
+    var index = 0
+
+    while (index < json.length) {
+        if (json[index] != '"') {
+            index++
+            continue
+        }
+
+        val stringEnd = findJsonStringEnd(json, index) ?: return null
+        val candidateFieldName = decodeJsonString(json.substring(index + 1, stringEnd))
+        index = stringEnd + 1
+
+        if (candidateFieldName != fieldName) {
+            continue
+        }
+
+        while (index < json.length && json[index].isWhitespace()) {
+            index++
+        }
+        if (index >= json.length || json[index] != ':') {
+            continue
+        }
+
+        index++
+        while (index < json.length && json[index].isWhitespace()) {
+            index++
+        }
+        return index
+    }
+
+    return null
+}
+
+private fun findJsonStringEnd(json: String, startQuoteIndex: Int): Int? {
+    var index = startQuoteIndex + 1
+    var escaped = false
+
+    while (index < json.length) {
+        val char = json[index]
+        when {
+            escaped -> escaped = false
+            char == '\\' -> escaped = true
+            char == '"' -> return index
+        }
+        index++
+    }
+
+    return null
+}
+
+private fun decodeJsonString(value: String): String {
+    val result = StringBuilder(value.length)
+    var index = 0
+    var escaped = false
+
+    while (index < value.length) {
+        val char = value[index++]
+        when {
+            escaped -> {
+                result.append(char)
+                escaped = false
+            }
+
+            char == '\\' -> escaped = true
+            else -> result.append(char)
+        }
+    }
+
+    return result.toString()
 }
