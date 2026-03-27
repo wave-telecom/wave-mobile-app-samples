@@ -7,16 +7,23 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Divider
+import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -27,10 +34,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import br.com.wave.flow_wrapper_kmp.FlowWrapper
 import br.com.wave.flow_wrapper_kmp.RenderBlock
 import br.com.wave.flow_wrapper_kmp.SDKEvent
@@ -52,6 +59,12 @@ private val TEST_MSISDN_OPTIONS = listOf(
     "5580651242",
 )
 
+private enum class AppScreen {
+    Login,
+    Home,
+    Config,
+}
+
 private sealed interface SdkHostAction {
     data class Navigate(val componentId: String) : SdkHostAction
     data class OpenExternal(val url: String) : SdkHostAction
@@ -70,6 +83,10 @@ fun App() {
 @Composable
 private fun WaveSdkSampleApp() {
     val msisdnOptions = remember { TEST_MSISDN_OPTIONS }
+    var currentScreen by remember { mutableStateOf(AppScreen.Login) }
+    var userName by remember { mutableStateOf("") }
+    var draftName by remember { mutableStateOf("") }
+    var draftPassword by rememberSaveable { mutableStateOf("") }
     var selectedMsisdn by remember { mutableStateOf(msisdnOptions.first()) }
     var isDropdownExpanded by remember { mutableStateOf(false) }
     var sdkStarted by remember { mutableStateOf(false) }
@@ -79,19 +96,30 @@ private fun WaveSdkSampleApp() {
     val componentStack = remember(selectedMsisdn) { mutableStateListOf<String>() }
     val currentComponentId = componentStack.lastOrNull()
     val currentEntryId = currentComponentId ?: INITIAL_FLOW_ID
-    val selectionSpacing = 12.dp
-    val density = LocalDensity.current
-    var selectionHeight by remember { mutableStateOf(0) }
-    val renderContentPadding = maxOf(with(density) { selectionHeight.toDp() }, selectionSpacing)
+    val showTopBar = currentScreen != AppScreen.Login
 
-    NativeBackHandler(enabled = currentComponentId != null) {
-        popComponentFromHostStack(
-            componentStack = componentStack,
-            reason = "native back button",
-        )
+    NativeBackHandler(enabled = currentScreen == AppScreen.Config || currentComponentId != null) {
+        when {
+            currentScreen == AppScreen.Config -> {
+                isDropdownExpanded = false
+                currentScreen = AppScreen.Home
+            }
+
+            currentComponentId != null -> {
+                popComponentFromHostStack(
+                    componentStack = componentStack,
+                    reason = "native back button",
+                )
+            }
+        }
     }
 
-    LaunchedEffect(msisdnWithPrefix) {
+    LaunchedEffect(currentScreen, msisdnWithPrefix) {
+        if (currentScreen == AppScreen.Login) {
+            sdkStarted = false
+            startupError = null
+            return@LaunchedEffect
+        }
         sdkStarted = false
         startupError = null
         runCatching {
@@ -111,51 +139,64 @@ private fun WaveSdkSampleApp() {
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier =
-                Modifier
-                    .align(Alignment.TopStart)
-                    .onGloballyPositioned { coordinates ->
-                        selectionHeight = coordinates.size.height
-                    },
-        ) {
-            MsisdnSelectionBox(
-                options = msisdnOptions,
-                selectedMsisdn = selectedMsisdn,
-                expanded = isDropdownExpanded,
-                onSelectionChange = { selectedMsisdn = it },
-                onExpandedChange = { isDropdownExpanded = it },
-            )
-            Spacer(modifier = Modifier.height(selectionSpacing))
-        }
+    if (!showTopBar) {
+        LoginScreen(
+            draftName = draftName,
+            onDraftNameChange = { draftName = it },
+            draftPassword = draftPassword,
+            onDraftPasswordChange = { draftPassword = it },
+            onLogin = {
+                userName = draftName.ifBlank { "Usuario" }.trim()
+                currentScreen = AppScreen.Home
+            },
+        )
+        return
+    }
 
-        Box(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .padding(top = renderContentPadding),
-        ) {
-            val reproduceRenderError = true
-            if (reproduceRenderError) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    RenderBlock(
-                        modifier = Modifier.weight(1f),
-                        componentId = null,
-                        flowId = INITIAL_FLOW_ID,
-                        onEvent = logRenderEvent("home"),
-                    )
-                    RenderBlock(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .height(NAVBAR_HEIGHT),
-                        componentId = null,
-                        flowId = NAVBAR_FLOW_ID,
-                        onEvent = logRenderEvent("navbar"),
-                    )
-                }
-            } else {
+    Scaffold(
+        topBar = {
+            AppTopBar(
+                userName = userName,
+                selectedMsisdn = msisdnWithPrefix,
+                currentScreen = currentScreen,
+                onOpenConfig = {
+                    isDropdownExpanded = false
+                    currentScreen = AppScreen.Config
+                },
+                onCloseConfig = {
+                    isDropdownExpanded = false
+                    currentScreen = AppScreen.Home
+                },
+            )
+        },
+    ) { innerPadding ->
+        when (currentScreen) {
+            AppScreen.Login -> Unit
+            AppScreen.Config -> {
+                ConfigScreen(
+                    contentPadding = innerPadding,
+                    options = msisdnOptions,
+                    selectedMsisdn = selectedMsisdn,
+                    expanded = isDropdownExpanded,
+                    onSelectionChange = { selectedMsisdn = it },
+                    onExpandedChange = { isDropdownExpanded = it },
+                    onLogout = {
+                        isDropdownExpanded = false
+                        userName = ""
+                        draftName = ""
+                        draftPassword = ""
+                        currentScreen = AppScreen.Login
+                    },
+                )
+            }
+
+            AppScreen.Home -> Box(
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+            ) {
+                val reproduceRenderError = true
                 when {
                     startupError != null -> Text(
                         text = "Initialization error: $startupError",
@@ -163,6 +204,26 @@ private fun WaveSdkSampleApp() {
                     )
 
                     !sdkStarted -> Box(modifier = Modifier.fillMaxSize())
+                    reproduceRenderError -> key(msisdnWithPrefix) {
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            RenderBlock(
+                                modifier = Modifier.weight(1f),
+                                componentId = null,
+                                flowId = INITIAL_FLOW_ID,
+                                onEvent = logRenderEvent("home"),
+                            )
+                            RenderBlock(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .height(NAVBAR_HEIGHT),
+                                componentId = null,
+                                flowId = NAVBAR_FLOW_ID,
+                                onEvent = logRenderEvent("navbar"),
+                            )
+                        }
+                    }
+
                     else -> key(msisdnWithPrefix) {
                         Box(modifier = Modifier.fillMaxSize()) {
                             Column(
@@ -227,6 +288,171 @@ private fun WaveSdkSampleApp() {
     }
 }
 
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun AppTopBar(
+    userName: String,
+    selectedMsisdn: String,
+    currentScreen: AppScreen,
+    onOpenConfig: () -> Unit,
+    onCloseConfig: () -> Unit,
+) {
+    TopAppBar(
+        title = {
+            Column {
+                Text(
+                    text = userName,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = "+$selectedMsisdn",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        },
+        navigationIcon = {
+            if (currentScreen == AppScreen.Config) {
+                TextButton(onClick = onCloseConfig) {
+                    Text("Voltar")
+                }
+            }
+        },
+        actions = {
+            if (currentScreen != AppScreen.Config) {
+                TextButton(onClick = onOpenConfig) {
+                    Text("\u2699")
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun LoginScreen(
+    draftName: String,
+    onDraftNameChange: (String) -> Unit,
+    draftPassword: String,
+    onDraftPasswordChange: (String) -> Unit,
+    onLogin: () -> Unit,
+) {
+    var passwordVisible by rememberSaveable { mutableStateOf(false) }
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp),
+        ) {
+            Text(
+                text = "Login",
+                style = MaterialTheme.typography.headlineMedium,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Entre com seu nome para acessar a home.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            OutlinedTextField(
+                value = draftName,
+                onValueChange = onDraftNameChange,
+                label = { Text("Nome") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedTextField(
+                value = draftPassword,
+                onValueChange = onDraftPasswordChange,
+                label = { Text("Senha") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                visualTransformation =
+                    if (passwordVisible) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
+                trailingIcon = {
+                    PasswordVisibilityToggle(
+                        passwordVisible = passwordVisible,
+                        onToggle = { passwordVisible = !passwordVisible },
+                    )
+                },
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            Button(
+                onClick = onLogin,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Entrar")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConfigScreen(
+    contentPadding: PaddingValues,
+    options: List<String>,
+    selectedMsisdn: String,
+    expanded: Boolean,
+    onSelectionChange: (String) -> Unit,
+    onExpandedChange: (Boolean) -> Unit,
+    onLogout: () -> Unit,
+) {
+    Column(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(contentPadding)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Text(
+            text = "Configuracoes",
+            style = MaterialTheme.typography.headlineSmall,
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "Escolha o MSISDN de teste usado para inicializar o SDK.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Spacer(modifier = Modifier.height(20.dp))
+        MsisdnSelectionBox(
+            options = options,
+            selectedMsisdn = selectedMsisdn,
+            expanded = expanded,
+            onSelectionChange = onSelectionChange,
+            onExpandedChange = onExpandedChange,
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = "SDK version",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = FLOW_WRAPPER_VERSION,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        Spacer(modifier = Modifier.height(24.dp))
+        Button(
+            onClick = onLogout,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Sair")
+        }
+    }
+}
+
 private fun logRenderEvent(flowId: String): (SDKEvent) -> Unit = { event ->
     logSdk(SDK_TAG, "$flowId event=${event::class.simpleName}")
 }
@@ -241,89 +467,69 @@ private fun MsisdnSelectionBox(
 ) {
     require(options.isNotEmpty())
 
-        Column(
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Box(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
+                    .clickable { onExpandedChange(!expanded) },
         ) {
-            Box(
+            OutlinedTextField(
+                value = "+$MSISDN_PREFIX$selectedMsisdn",
+                onValueChange = {},
+                readOnly = true,
+                enabled = false,
+                label = { Text("MSISDN de teste") },
+                trailingIcon = {
+                    Text("▾")
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        if (expanded) {
+            Column(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .clickable { onExpandedChange(!expanded) },
-            ) {
-                OutlinedTextField(
-                    value = "+$MSISDN_PREFIX$selectedMsisdn",
-                    onValueChange = {},
-                    readOnly = true,
-                    enabled = false,
-                    label = { Text("MSISDN de teste") },
-                    trailingIcon = {
-                        Text("▾")
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            if (expanded) {
-                Column(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .border(
-                                width = 1.dp,
-                                color = MaterialTheme.colorScheme.outline,
-                                shape = RoundedCornerShape(8.dp),
-                            )
-                            .background(
-                                color = MaterialTheme.colorScheme.surfaceVariant,
-                                shape = RoundedCornerShape(8.dp),
-                            ),
-                ) {
-                    options.forEachIndexed { index, option ->
-                        Text(
-                            text = "+$MSISDN_PREFIX$option",
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        onSelectionChange(option)
-                                        onExpandedChange(false)
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 12.dp),
-                            style = MaterialTheme.typography.bodyMedium,
+                        .border(
+                            width = 1.dp,
+                            color = MaterialTheme.colorScheme.outline,
+                            shape = RoundedCornerShape(8.dp),
                         )
+                        .background(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shape = RoundedCornerShape(8.dp),
+                        ),
+            ) {
+                options.forEachIndexed { index, option ->
+                    Text(
+                        text = "+$MSISDN_PREFIX$option",
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onSelectionChange(option)
+                                    onExpandedChange(false)
+                                }
+                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
 
-                        if (index < options.lastIndex) {
-                            Divider(
-                                modifier = Modifier.padding(horizontal = 12.dp),
-                                color = MaterialTheme.colorScheme.outlineVariant,
-                            )
-                        }
+                    if (index < options.lastIndex) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant,
+                        )
                     }
                 }
             }
-
-            Row(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(
-                    text = "MSISDN atual: +$MSISDN_PREFIX$selectedMsisdn",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text(
-                    text = "SDK v$FLOW_WRAPPER_VERSION",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
         }
+    }
 }
 
 private fun handleSdkEvent(
@@ -428,17 +634,7 @@ private fun popComponentFromHostStack(
 }
 
 private fun extractJsonObjectField(json: String, fieldName: String): String? {
-    val quotedFieldName = "\"$fieldName\""
-    val fieldStart = json.indexOf(quotedFieldName)
-    if (fieldStart < 0) return null
-
-    val colonIndex = json.indexOf(':', startIndex = fieldStart + quotedFieldName.length)
-    if (colonIndex < 0) return null
-
-    var valueStart = colonIndex + 1
-    while (valueStart < json.length && json[valueStart].isWhitespace()) {
-        valueStart++
-    }
+    val valueStart = findJsonFieldValueStart(json, fieldName) ?: return null
     if (valueStart >= json.length || json[valueStart] != '{') return null
 
     var depth = 0
@@ -467,17 +663,7 @@ private fun extractJsonObjectField(json: String, fieldName: String): String? {
 }
 
 private fun extractJsonStringField(json: String, fieldName: String): String? {
-    val quotedFieldName = "\"$fieldName\""
-    val fieldStart = json.indexOf(quotedFieldName)
-    if (fieldStart < 0) return null
-
-    val colonIndex = json.indexOf(':', startIndex = fieldStart + quotedFieldName.length)
-    if (colonIndex < 0) return null
-
-    var valueStart = colonIndex + 1
-    while (valueStart < json.length && json[valueStart].isWhitespace()) {
-        valueStart++
-    }
+    val valueStart = findJsonFieldValueStart(json, fieldName) ?: return null
     if (valueStart >= json.length || json[valueStart] != '"') return null
 
     val result = StringBuilder()
@@ -499,4 +685,76 @@ private fun extractJsonStringField(json: String, fieldName: String): String? {
     }
 
     return null
+}
+
+private fun findJsonFieldValueStart(json: String, fieldName: String): Int? {
+    var index = 0
+
+    while (index < json.length) {
+        if (json[index] != '"') {
+            index++
+            continue
+        }
+
+        val stringEnd = findJsonStringEnd(json, index) ?: return null
+        val candidateFieldName = decodeJsonString(json.substring(index + 1, stringEnd))
+        index = stringEnd + 1
+
+        if (candidateFieldName != fieldName) {
+            continue
+        }
+
+        while (index < json.length && json[index].isWhitespace()) {
+            index++
+        }
+        if (index >= json.length || json[index] != ':') {
+            continue
+        }
+
+        index++
+        while (index < json.length && json[index].isWhitespace()) {
+            index++
+        }
+        return index
+    }
+
+    return null
+}
+
+private fun findJsonStringEnd(json: String, startQuoteIndex: Int): Int? {
+    var index = startQuoteIndex + 1
+    var escaped = false
+
+    while (index < json.length) {
+        val char = json[index]
+        when {
+            escaped -> escaped = false
+            char == '\\' -> escaped = true
+            char == '"' -> return index
+        }
+        index++
+    }
+
+    return null
+}
+
+private fun decodeJsonString(value: String): String {
+    val result = StringBuilder(value.length)
+    var index = 0
+    var escaped = false
+
+    while (index < value.length) {
+        val char = value[index++]
+        when {
+            escaped -> {
+                result.append(char)
+                escaped = false
+            }
+
+            char == '\\' -> escaped = true
+            else -> result.append(char)
+        }
+    }
+
+    return result.toString()
 }
