@@ -65,6 +65,11 @@ private enum class AppScreen {
     Config,
 }
 
+private enum class InitializationContext {
+    Login,
+    Config,
+}
+
 private sealed interface SdkHostAction {
     data class Navigate(val componentId: String) : SdkHostAction
     data class OpenExternal(val url: String) : SdkHostAction
@@ -89,7 +94,7 @@ private fun WaveSdkSampleApp() {
     var draftPassword by rememberSaveable { mutableStateOf("") }
     var selectedMsisdn by remember { mutableStateOf(msisdnOptions.first()) }
     var isDropdownExpanded by remember { mutableStateOf(false) }
-    var isWaitingForLoginInitialization by remember { mutableStateOf(false) }
+    var pendingInitializationContext by remember { mutableStateOf<InitializationContext?>(null) }
     var startupError by remember { mutableStateOf<String?>(null) }
     var readyMsisdn by remember { mutableStateOf<String?>(null) }
 
@@ -99,48 +104,55 @@ private fun WaveSdkSampleApp() {
     val currentEntryId = currentComponentId ?: INITIAL_FLOW_ID
     val showTopBar = currentScreen != AppScreen.Login
     val isCurrentMsisdnReady = readyMsisdn == msisdnWithPrefix
+    val isLoginInitializing = pendingInitializationContext == InitializationContext.Login
+    val isConfigInitializing = pendingInitializationContext == InitializationContext.Config
 
-    fun startLoginInitialization() {
-        if (isWaitingForLoginInitialization) {
-            return
+    val startSdkForMsisdn: (String, InitializationContext) -> Unit = start@{ targetMsisdn, context ->
+        if (pendingInitializationContext != null) {
+            return@start
         }
 
-        if (SAMPLE_API_KEY.isBlank() || SAMPLE_API_KEY == "SUA_API_KEY") {
+        if (SAMPLE_API_KEY.isBlank()) {
             startupError = "Missing Flow Wrapper API key"
             logSdk(SDK_TAG, "SDK initialization failed: $startupError")
-            return
+            return@start
         }
 
-        if (isCurrentMsisdnReady) {
-            currentScreen = AppScreen.Home
-            return
+        val targetMsisdnWithPrefix = "$MSISDN_PREFIX$targetMsisdn"
+        if (readyMsisdn == targetMsisdnWithPrefix) {
+            if (context == InitializationContext.Login) {
+                currentScreen = AppScreen.Home
+            }
+            return@start
         }
 
-        isWaitingForLoginInitialization = true
+        pendingInitializationContext = context
         startupError = null
         componentStack.clear()
 
         runCatching {
             FlowWrapper.start(
                 apiKey = SAMPLE_API_KEY,
-                msisdn = msisdnWithPrefix,
+                msisdn = targetMsisdnWithPrefix,
                 onReady = {
-                    readyMsisdn = msisdnWithPrefix
-                    isWaitingForLoginInitialization = false
-                    currentScreen = AppScreen.Home
+                    readyMsisdn = targetMsisdnWithPrefix
+                    pendingInitializationContext = null
                     logSdk(
                         SDK_TAG,
-                        "SDK ready with FlowWrapper.start(apiKey, msisdn=$msisdnWithPrefix)",
+                        "SDK ready with FlowWrapper.start(apiKey, msisdn=$targetMsisdnWithPrefix)",
                     )
+                    if (context == InitializationContext.Login) {
+                        currentScreen = AppScreen.Home
+                    }
                 },
             )
         }.onSuccess {
             logSdk(
                 SDK_TAG,
-                "SDK initialization started with FlowWrapper.start(apiKey, msisdn=$msisdnWithPrefix)",
+                "SDK initialization started with FlowWrapper.start(apiKey, msisdn=$targetMsisdnWithPrefix)",
             )
         }.onFailure { throwable ->
-            isWaitingForLoginInitialization = false
+            pendingInitializationContext = null
             startupError = throwable.message ?: throwable::class.simpleName ?: "Unknown startup error"
             logSdk(SDK_TAG, "SDK initialization failed: $startupError")
         }
@@ -148,7 +160,7 @@ private fun WaveSdkSampleApp() {
 
     NativeBackHandler(enabled = currentScreen == AppScreen.Config || currentComponentId != null) {
         when {
-            currentScreen == AppScreen.Config -> {
+            currentScreen == AppScreen.Config && !isConfigInitializing -> {
                 isDropdownExpanded = false
                 currentScreen = AppScreen.Home
             }
@@ -171,9 +183,9 @@ private fun WaveSdkSampleApp() {
             onLogin = {
                 userName = draftName.ifBlank { "Usuario" }.trim()
                 startupError = null
-                startLoginInitialization()
+                startSdkForMsisdn(selectedMsisdn, InitializationContext.Login)
             },
-            isLoading = isWaitingForLoginInitialization,
+            isLoading = isLoginInitializing,
             errorMessage = startupError,
         )
         return
@@ -190,9 +202,12 @@ private fun WaveSdkSampleApp() {
                     currentScreen = AppScreen.Config
                 },
                 onCloseConfig = {
-                    isDropdownExpanded = false
-                    currentScreen = AppScreen.Home
+                    if (!isConfigInitializing) {
+                        isDropdownExpanded = false
+                        currentScreen = AppScreen.Home
+                    }
                 },
+                configNavigationEnabled = !isConfigInitializing,
             )
         },
     ) { innerPadding ->
@@ -204,19 +219,27 @@ private fun WaveSdkSampleApp() {
                     options = msisdnOptions,
                     selectedMsisdn = selectedMsisdn,
                     expanded = isDropdownExpanded,
-                    onSelectionChange = { selectedMsisdn = it },
+                    onSelectionChange = { updatedMsisdn ->
+                        isDropdownExpanded = false
+                        if (updatedMsisdn != selectedMsisdn) {
+                            selectedMsisdn = updatedMsisdn
+                            startSdkForMsisdn(updatedMsisdn, InitializationContext.Config)
+                        }
+                    },
                     onExpandedChange = { isDropdownExpanded = it },
                     onLogout = {
                         isDropdownExpanded = false
                         userName = ""
                         draftName = ""
                         draftPassword = ""
-                        isWaitingForLoginInitialization = false
+                        pendingInitializationContext = null
                         readyMsisdn = null
                         startupError = null
                         componentStack.clear()
                         currentScreen = AppScreen.Login
                     },
+                    isLoading = isConfigInitializing,
+                    errorMessage = startupError,
                 )
             }
 
@@ -326,6 +349,7 @@ private fun AppTopBar(
     currentScreen: AppScreen,
     onOpenConfig: () -> Unit,
     onCloseConfig: () -> Unit,
+    configNavigationEnabled: Boolean,
 ) {
     TopAppBar(
         title = {
@@ -342,7 +366,10 @@ private fun AppTopBar(
         },
         navigationIcon = {
             if (currentScreen == AppScreen.Config) {
-                TextButton(onClick = onCloseConfig) {
+                TextButton(
+                    onClick = onCloseConfig,
+                    enabled = configNavigationEnabled,
+                ) {
                     Text("Voltar")
                 }
             }
@@ -451,6 +478,8 @@ private fun ConfigScreen(
     onSelectionChange: (String) -> Unit,
     onExpandedChange: (Boolean) -> Unit,
     onLogout: () -> Unit,
+    isLoading: Boolean,
+    errorMessage: String?,
 ) {
     Column(
         modifier =
@@ -475,7 +504,30 @@ private fun ConfigScreen(
             expanded = expanded,
             onSelectionChange = onSelectionChange,
             onExpandedChange = onExpandedChange,
+            enabled = !isLoading,
         )
+        if (isLoading) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                CircularProgressIndicator()
+                Text(
+                    text = "Atualizando SDK para o novo MSISDN...",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
+        if (errorMessage != null) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "Initialization error: $errorMessage",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
         Spacer(modifier = Modifier.height(16.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -494,6 +546,7 @@ private fun ConfigScreen(
         Button(
             onClick = onLogout,
             modifier = Modifier.fillMaxWidth(),
+            enabled = !isLoading,
         ) {
             Text("Sair")
         }
@@ -511,6 +564,7 @@ private fun MsisdnSelectionBox(
     expanded: Boolean,
     onSelectionChange: (String) -> Unit,
     onExpandedChange: (Boolean) -> Unit,
+    enabled: Boolean,
 ) {
     require(options.isNotEmpty())
 
@@ -521,7 +575,7 @@ private fun MsisdnSelectionBox(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .clickable { onExpandedChange(!expanded) },
+                    .clickable(enabled = enabled) { onExpandedChange(!expanded) },
         ) {
             OutlinedTextField(
                 value = "+$MSISDN_PREFIX$selectedMsisdn",
