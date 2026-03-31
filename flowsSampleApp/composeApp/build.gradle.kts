@@ -1,7 +1,7 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
-val flowWrapperVersion = "0.5.7"
+val flowWrapperVersion = "0.5.9"
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
