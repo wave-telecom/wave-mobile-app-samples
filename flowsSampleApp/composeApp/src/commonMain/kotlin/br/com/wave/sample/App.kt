@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -25,7 +26,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
@@ -43,7 +43,7 @@ import br.com.wave.flow_wrapper_kmp.RenderBlock
 import br.com.wave.flow_wrapper_kmp.SDKEvent
 
 private const val SDK_TAG = "WaveSdkSample"
-private const val SAMPLE_API_KEY = "YOUR_API_KEY"
+private const val SAMPLE_API_KEY = "SUA_API_KEY"
 private const val INITIAL_FLOW_ID = "home"
 private const val NAVBAR_FLOW_ID = "navbar"
 private val NAVBAR_HEIGHT = 88.dp
@@ -89,14 +89,62 @@ private fun WaveSdkSampleApp() {
     var draftPassword by rememberSaveable { mutableStateOf("") }
     var selectedMsisdn by remember { mutableStateOf(msisdnOptions.first()) }
     var isDropdownExpanded by remember { mutableStateOf(false) }
-    var sdkStarted by remember { mutableStateOf(false) }
+    var isWaitingForLoginInitialization by remember { mutableStateOf(false) }
     var startupError by remember { mutableStateOf<String?>(null) }
+    var readyMsisdn by remember { mutableStateOf<String?>(null) }
 
     val msisdnWithPrefix = "$MSISDN_PREFIX$selectedMsisdn"
     val componentStack = remember(selectedMsisdn) { mutableStateListOf<String>() }
     val currentComponentId = componentStack.lastOrNull()
     val currentEntryId = currentComponentId ?: INITIAL_FLOW_ID
     val showTopBar = currentScreen != AppScreen.Login
+    val isCurrentMsisdnReady = readyMsisdn == msisdnWithPrefix
+
+    fun startLoginInitialization() {
+        if (isWaitingForLoginInitialization) {
+            return
+        }
+
+        if (SAMPLE_API_KEY.isBlank() || SAMPLE_API_KEY == "SUA_API_KEY") {
+            startupError = "Missing Flow Wrapper API key"
+            logSdk(SDK_TAG, "SDK initialization failed: $startupError")
+            return
+        }
+
+        if (isCurrentMsisdnReady) {
+            currentScreen = AppScreen.Home
+            return
+        }
+
+        isWaitingForLoginInitialization = true
+        startupError = null
+        componentStack.clear()
+
+        runCatching {
+            FlowWrapper.start(
+                apiKey = SAMPLE_API_KEY,
+                msisdn = msisdnWithPrefix,
+                onReady = {
+                    readyMsisdn = msisdnWithPrefix
+                    isWaitingForLoginInitialization = false
+                    currentScreen = AppScreen.Home
+                    logSdk(
+                        SDK_TAG,
+                        "SDK ready with FlowWrapper.start(apiKey, msisdn=$msisdnWithPrefix)",
+                    )
+                },
+            )
+        }.onSuccess {
+            logSdk(
+                SDK_TAG,
+                "SDK initialization started with FlowWrapper.start(apiKey, msisdn=$msisdnWithPrefix)",
+            )
+        }.onFailure { throwable ->
+            isWaitingForLoginInitialization = false
+            startupError = throwable.message ?: throwable::class.simpleName ?: "Unknown startup error"
+            logSdk(SDK_TAG, "SDK initialization failed: $startupError")
+        }
+    }
 
     NativeBackHandler(enabled = currentScreen == AppScreen.Config || currentComponentId != null) {
         when {
@@ -114,31 +162,6 @@ private fun WaveSdkSampleApp() {
         }
     }
 
-    LaunchedEffect(currentScreen, msisdnWithPrefix) {
-        if (currentScreen == AppScreen.Login) {
-            sdkStarted = false
-            startupError = null
-            return@LaunchedEffect
-        }
-        sdkStarted = false
-        startupError = null
-        runCatching {
-            FlowWrapper.start(
-                apiKey = SAMPLE_API_KEY,
-                msisdn = msisdnWithPrefix,
-            )
-        }.onSuccess {
-            sdkStarted = true
-            logSdk(
-                SDK_TAG,
-                "SDK initialized with FlowWrapper.start(apiKey, msisdn=$msisdnWithPrefix)",
-            )
-        }.onFailure { throwable ->
-            startupError = throwable.message ?: throwable::class.simpleName ?: "Unknown startup error"
-            logSdk(SDK_TAG, "SDK initialization failed: $startupError")
-        }
-    }
-
     if (!showTopBar) {
         LoginScreen(
             draftName = draftName,
@@ -147,8 +170,11 @@ private fun WaveSdkSampleApp() {
             onDraftPasswordChange = { draftPassword = it },
             onLogin = {
                 userName = draftName.ifBlank { "Usuario" }.trim()
-                currentScreen = AppScreen.Home
+                startupError = null
+                startLoginInitialization()
             },
+            isLoading = isWaitingForLoginInitialization,
+            errorMessage = startupError,
         )
         return
     }
@@ -185,6 +211,10 @@ private fun WaveSdkSampleApp() {
                         userName = ""
                         draftName = ""
                         draftPassword = ""
+                        isWaitingForLoginInitialization = false
+                        readyMsisdn = null
+                        startupError = null
+                        componentStack.clear()
                         currentScreen = AppScreen.Login
                     },
                 )
@@ -203,7 +233,7 @@ private fun WaveSdkSampleApp() {
                         modifier = Modifier.align(Alignment.Center),
                     )
 
-                    !sdkStarted -> Box(modifier = Modifier.fillMaxSize())
+                    !isCurrentMsisdnReady -> Box(modifier = Modifier.fillMaxSize())
                     reproduceRenderError -> key(msisdnWithPrefix) {
                         Column(modifier = Modifier.fillMaxSize()) {
                             RenderBlock(
@@ -334,6 +364,8 @@ private fun LoginScreen(
     draftPassword: String,
     onDraftPasswordChange: (String) -> Unit,
     onLogin: () -> Unit,
+    isLoading: Boolean,
+    errorMessage: String?,
 ) {
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
 
@@ -363,6 +395,7 @@ private fun LoginScreen(
                 label = { Text("Nome") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
+                enabled = !isLoading,
             )
             Spacer(modifier = Modifier.height(12.dp))
             OutlinedTextField(
@@ -371,6 +404,7 @@ private fun LoginScreen(
                 label = { Text("Senha") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
+                enabled = !isLoading,
                 visualTransformation =
                     if (passwordVisible) {
                         VisualTransformation.None
@@ -388,8 +422,21 @@ private fun LoginScreen(
             Button(
                 onClick = onLogin,
                 modifier = Modifier.fillMaxWidth(),
+                enabled = !isLoading,
             ) {
-                Text("Entrar")
+                if (isLoading) {
+                    CircularProgressIndicator()
+                } else {
+                    Text("Entrar")
+                }
+            }
+            if (errorMessage != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Initialization error: $errorMessage",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
         }
     }
