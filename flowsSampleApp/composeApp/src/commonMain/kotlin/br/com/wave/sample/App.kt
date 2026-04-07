@@ -43,10 +43,18 @@ import br.com.wave.flow_wrapper_kmp.RenderBlock
 import br.com.wave.flow_wrapper_kmp.SDKEvent
 
 private const val SDK_TAG = "WaveSdkSample"
-private const val SAMPLE_API_KEY = "SUA_API_KEY"
+private const val SAMPLE_API_KEY =
+    "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImR1MFVjYWxyZlNQckRCNU1qZ3VvMyJ9.eyJjbGllbnQiOiJ0ZWxjZWwtc3BlZWR5IiwiZW52aXJvbm1lbnQiOiJERVYiLCJpc3MiOiJodHRwczovL3dhdmUtdGVjaC1kZXYudXMuYXV0aDAuY29tLyIsInN1YiI6InJ0UFNJeTByOFlJT3hnYjJwakRWSzNZcFN3VmdQTGtRQGNsaWVudHMiLCJhdWQiOiJodHRwczovL2l6emktYWN0aXZhdGlvbi1kZXYtMGVkMi51Yy5yLmFwcHNwb3QuY29tLyIsImlhdCI6MTc3MjcxNzMxMCwiZXhwIjoxNzcyODAzNzEwLCJndHkiOiJjbGllbnQtY3JlZGVudGlhbHMiLCJhenAiOiJydFBTSXkwcjhZSU94Z2IycGpEVkszWXBTd1ZnUExrUSJ9.FRG72ttH0iPM0tXDx_G0nqjjwAXhKPXjmes20yVmfqP0pyhRkX5j_3hDcIUWZzV0sQ728voygxkTrN2evHh-FYfvrHIvkJ7W2QMBApogIwvjv6AeNLtuqK1NEEpi1vKlqAd6Er8Qn1cofOmlcWwL1qj71HBlmklPkwjNzL_oAWWDzOYYTwF5j4grgKHQKAGP5UjZvVPiCMkblkFjzp2FmFJUXIb_2I6BpRAbR166fner_C0tt_yqy0xRqYd8S6D4zqMHZ5qngyMNKl8VmXKo2O65dCDofxDYb2YqkUMwE_A88_Tlxhf-mBP3AJps305DseTj-L9N9c9M_WSQi_dY0g"
 private const val INITIAL_FLOW_ID = "home"
 private const val NAVBAR_FLOW_ID = "navbar"
 private val NAVBAR_HEIGHT = 88.dp
+private val NAVBAR_COMPONENT_IDS = setOf(
+    "home-screen-1",
+    "consumos-screen-1",
+    "paquetes-screen-1",
+    "servicios-screen-1",
+    "ayuda-screen-1",
+)
 private const val MSISDN_PREFIX = "52"
 private val TEST_MSISDN_OPTIONS = listOf(
     "5510108894",
@@ -68,6 +76,11 @@ private enum class AppScreen {
 private enum class InitializationContext {
     Login,
     Config,
+}
+
+private enum class RenderSource {
+    Content,
+    Navbar,
 }
 
 private sealed interface SdkHostAction {
@@ -99,6 +112,7 @@ private fun WaveSdkSampleApp() {
     var readyMsisdn by remember { mutableStateOf<String?>(null) }
 
     val msisdnWithPrefix = "$MSISDN_PREFIX$selectedMsisdn"
+    var isNavbarReadyToUnblockContent by remember(msisdnWithPrefix) { mutableStateOf(false) }
     val componentStack = remember(selectedMsisdn) { mutableStateListOf<String>() }
     val currentComponentId = componentStack.lastOrNull()
     val currentEntryId = currentComponentId ?: INITIAL_FLOW_ID
@@ -128,6 +142,7 @@ private fun WaveSdkSampleApp() {
 
         pendingInitializationContext = context
         startupError = null
+        isNavbarReadyToUnblockContent = false
         componentStack.clear()
 
         runCatching {
@@ -235,6 +250,7 @@ private fun WaveSdkSampleApp() {
                         pendingInitializationContext = null
                         readyMsisdn = null
                         startupError = null
+                        isNavbarReadyToUnblockContent = false
                         componentStack.clear()
                         currentScreen = AppScreen.Login
                     },
@@ -249,7 +265,6 @@ private fun WaveSdkSampleApp() {
                         .fillMaxSize()
                         .padding(innerPadding),
             ) {
-                val reproduceRenderError = true
                 when {
                     startupError != null -> Text(
                         text = "Initialization error: $startupError",
@@ -257,65 +272,8 @@ private fun WaveSdkSampleApp() {
                     )
 
                     !isCurrentMsisdnReady -> Box(modifier = Modifier.fillMaxSize())
-                    reproduceRenderError -> key(msisdnWithPrefix) {
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            RenderBlock(
-                                modifier = Modifier.weight(1f),
-                                componentId = null,
-                                flowId = INITIAL_FLOW_ID,
-                                onEvent = logRenderEvent("home"),
-                            )
-                            RenderBlock(
-                                modifier =
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .height(NAVBAR_HEIGHT),
-                                componentId = null,
-                                flowId = NAVBAR_FLOW_ID,
-                                onEvent = logRenderEvent("navbar"),
-                            )
-                        }
-                    }
-
                     else -> key(msisdnWithPrefix) {
                         Box(modifier = Modifier.fillMaxSize()) {
-                            Column(
-                                modifier =
-                                    Modifier
-                                        .fillMaxSize()
-                                        .padding(bottom = NAVBAR_HEIGHT),
-                            ) {
-                                Box(modifier = Modifier.fillMaxSize()) {
-                                    key(currentEntryId) {
-                                        if (currentComponentId == null) {
-                                            RenderBlock(
-                                                flowId = INITIAL_FLOW_ID,
-                                                modifier = Modifier.fillMaxSize(),
-                                                onEvent = { event ->
-                                                    handleSdkEvent(
-                                                        event = event,
-                                                        currentComponentId = currentEntryId,
-                                                        componentStack = componentStack,
-                                                    )
-                                                },
-                                            )
-                                        } else {
-                                            RenderBlock(
-                                                componentId = currentComponentId,
-                                                modifier = Modifier.fillMaxSize(),
-                                                onEvent = { event ->
-                                                    handleSdkEvent(
-                                                        event = event,
-                                                        currentComponentId = currentComponentId,
-                                                        componentStack = componentStack,
-                                                    )
-                                                },
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
                             key(NAVBAR_FLOW_ID) {
                                 RenderBlock(
                                     flowId = NAVBAR_FLOW_ID,
@@ -327,11 +285,56 @@ private fun WaveSdkSampleApp() {
                                     onEvent = { event ->
                                         handleSdkEvent(
                                             event = event,
-                                            currentComponentId = currentEntryId,
+                                            currentComponentId = currentComponentId,
                                             componentStack = componentStack,
+                                            source = RenderSource.Navbar,
                                         )
+                                        if (event is SDKEvent.ComponentLoaded || event is SDKEvent.Error) {
+                                            isNavbarReadyToUnblockContent = true
+                                        }
                                     },
                                 )
+                            }
+
+                            if (isNavbarReadyToUnblockContent) {
+                                Column(
+                                    modifier =
+                                        Modifier
+                                            .fillMaxSize()
+                                            .padding(bottom = NAVBAR_HEIGHT),
+                                ) {
+                                    Box(modifier = Modifier.fillMaxSize()) {
+                                        key(currentEntryId) {
+                                            if (currentComponentId == null) {
+                                                RenderBlock(
+                                                    flowId = INITIAL_FLOW_ID,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    onEvent = { event ->
+                                                        handleSdkEvent(
+                                                            event = event,
+                                                            currentComponentId = null,
+                                                            componentStack = componentStack,
+                                                            source = RenderSource.Content,
+                                                        )
+                                                    },
+                                                )
+                                            } else {
+                                                RenderBlock(
+                                                    componentId = currentComponentId,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    onEvent = { event ->
+                                                        handleSdkEvent(
+                                                            event = event,
+                                                            currentComponentId = currentComponentId,
+                                                            componentStack = componentStack,
+                                                            source = RenderSource.Content,
+                                                        )
+                                                    },
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -635,8 +638,9 @@ private fun MsisdnSelectionBox(
 
 private fun handleSdkEvent(
     event: SDKEvent,
-    currentComponentId: String,
+    currentComponentId: String?,
     componentStack: MutableList<String>,
+    source: RenderSource,
 ) {
     when (event) {
         is SDKEvent.ComponentLoaded -> {
@@ -654,11 +658,20 @@ private fun handleSdkEvent(
             logSdk(SDK_TAG, "SDKEvent.Callback type=${event.type} payload=${event.payload}")
             when (val action = resolveSdkHostAction(event, currentComponentId)) {
                 is SdkHostAction.Navigate -> {
-                    componentStack += action.componentId
-                    logSdk(
-                        SDK_TAG,
-                        "Host navigate push componentId=${action.componentId} stackSize=${componentStack.size}",
-                    )
+                    if (source == RenderSource.Navbar && action.componentId in NAVBAR_COMPONENT_IDS) {
+                        componentStack.clear()
+                        componentStack += action.componentId
+                        logSdk(
+                            SDK_TAG,
+                            "Host navbar navigate replace componentId=${action.componentId}",
+                        )
+                    } else {
+                        componentStack += action.componentId
+                        logSdk(
+                            SDK_TAG,
+                            "Host navigate push componentId=${action.componentId} stackSize=${componentStack.size}",
+                        )
+                    }
                 }
 
                 SdkHostAction.Back -> {
@@ -680,7 +693,7 @@ private fun handleSdkEvent(
 
 private fun resolveSdkHostAction(
     event: SDKEvent.Callback,
-    currentComponentId: String,
+    currentComponentId: String?,
 ): SdkHostAction {
     val normalizedType = event.type.lowercase()
     val callbackPayload = extractJsonObjectField(event.payload, "payload") ?: event.payload
