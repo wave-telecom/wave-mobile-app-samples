@@ -9,10 +9,13 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -26,6 +29,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
@@ -34,27 +38,27 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import br.com.wave.flow_wrapper_kmp.FlowWrapper
-import br.com.wave.flow_wrapper_kmp.RenderBlock
-import br.com.wave.flow_wrapper_kmp.SDKEvent
+import br.com.wave.flows.kmp.FlowWrapper
+import br.com.wave.flows.kmp.FlowsSdkBuildInfo
+import br.com.wave.flows.kmp.RenderBlock
+import br.com.wave.flows.kmp.SDKEvent
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
+import androidx.compose.runtime.withFrameNanos
 
 private const val SDK_TAG = "WaveSdkSample"
 private const val SAMPLE_API_KEY =
     "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImR1MFVjYWxyZlNQckRCNU1qZ3VvMyJ9.eyJjbGllbnQiOiJ0ZWxjZWwtc3BlZWR5IiwiZW52aXJvbm1lbnQiOiJERVYiLCJpc3MiOiJodHRwczovL3dhdmUtdGVjaC1kZXYudXMuYXV0aDAuY29tLyIsInN1YiI6InJ0UFNJeTByOFlJT3hnYjJwakRWSzNZcFN3VmdQTGtRQGNsaWVudHMiLCJhdWQiOiJodHRwczovL2l6emktYWN0aXZhdGlvbi1kZXYtMGVkMi51Yy5yLmFwcHNwb3QuY29tLyIsImlhdCI6MTc3MjcxNzMxMCwiZXhwIjoxNzcyODAzNzEwLCJndHkiOiJjbGllbnQtY3JlZGVudGlhbHMiLCJhenAiOiJydFBTSXkwcjhZSU94Z2IycGpEVkszWXBTd1ZnUExrUSJ9.FRG72ttH0iPM0tXDx_G0nqjjwAXhKPXjmes20yVmfqP0pyhRkX5j_3hDcIUWZzV0sQ728voygxkTrN2evHh-FYfvrHIvkJ7W2QMBApogIwvjv6AeNLtuqK1NEEpi1vKlqAd6Er8Qn1cofOmlcWwL1qj71HBlmklPkwjNzL_oAWWDzOYYTwF5j4grgKHQKAGP5UjZvVPiCMkblkFjzp2FmFJUXIb_2I6BpRAbR166fner_C0tt_yqy0xRqYd8S6D4zqMHZ5qngyMNKl8VmXKo2O65dCDofxDYb2YqkUMwE_A88_Tlxhf-mBP3AJps305DseTj-L9N9c9M_WSQi_dY0g"
 private const val INITIAL_FLOW_ID = "home"
 private const val NAVBAR_FLOW_ID = "navbar"
+private val TEMP_BLOCKED_TARGET_IDS = setOf("consumos-screen-1")
 private val NAVBAR_HEIGHT = 88.dp
-private val NAVBAR_COMPONENT_IDS = setOf(
-    "home-screen-1",
-    "consumos-screen-1",
-    "paquetes-screen-1",
-    "servicios-screen-1",
-    "ayuda-screen-1",
-)
 private const val MSISDN_PREFIX = "52"
 private val TEST_MSISDN_OPTIONS = listOf(
     "5510108894",
@@ -83,8 +87,15 @@ private enum class RenderSource {
     Navbar,
 }
 
+private sealed interface ContentTarget {
+    data class Component(val componentId: String) : ContentTarget
+
+    data class Flow(val flowId: String) : ContentTarget
+}
+
 private sealed interface SdkHostAction {
-    data class Navigate(val componentId: String) : SdkHostAction
+    data class Navigate(val target: ContentTarget) : SdkHostAction
+    data class BlockedNavigation(val targetId: String) : SdkHostAction
     data class OpenExternal(val url: String) : SdkHostAction
     data object Back : SdkHostAction
     data object None : SdkHostAction
@@ -92,14 +103,18 @@ private sealed interface SdkHostAction {
 
 @Composable
 @Preview
-fun App() {
+fun App(
+    onDebugSnapshot: (String) -> Unit = {},
+) {
     MaterialTheme {
-        WaveSdkSampleApp()
+        WaveSdkSampleApp(onDebugSnapshot = onDebugSnapshot)
     }
 }
 
 @Composable
-private fun WaveSdkSampleApp() {
+private fun WaveSdkSampleApp(
+    onDebugSnapshot: (String) -> Unit,
+) {
     val msisdnOptions = remember { TEST_MSISDN_OPTIONS }
     var currentScreen by remember { mutableStateOf(AppScreen.Login) }
     var userName by remember { mutableStateOf("") }
@@ -110,16 +125,54 @@ private fun WaveSdkSampleApp() {
     var pendingInitializationContext by remember { mutableStateOf<InitializationContext?>(null) }
     var startupError by remember { mutableStateOf<String?>(null) }
     var readyMsisdn by remember { mutableStateOf<String?>(null) }
+    var loginTappedAt by remember(selectedMsisdn) { mutableStateOf<TimeMark?>(null) }
+    var homeShownAt by remember(selectedMsisdn) { mutableStateOf<TimeMark?>(null) }
+    var navbarReadyAt by remember(selectedMsisdn) { mutableStateOf<TimeMark?>(null) }
+    var homeFrameCount by remember(selectedMsisdn) { mutableStateOf(0) }
+    var navbarFirstLayoutFrame by remember(selectedMsisdn) { mutableStateOf<Int?>(null) }
 
     val msisdnWithPrefix = "$MSISDN_PREFIX$selectedMsisdn"
-    var isNavbarReadyToUnblockContent by remember(msisdnWithPrefix) { mutableStateOf(false) }
-    val componentStack = remember(selectedMsisdn) { mutableStateListOf<String>() }
-    val currentComponentId = componentStack.lastOrNull()
-    val currentEntryId = currentComponentId ?: INITIAL_FLOW_ID
+    var isNavbarReadyToUnblockContent by remember(msisdnWithPrefix) { mutableStateOf(true) }
+    val contentTargetStack = remember(selectedMsisdn) { mutableStateListOf<ContentTarget>() }
+    val currentContentTarget = contentTargetStack.lastOrNull()
+    val currentEntryId =
+        when (currentContentTarget) {
+            is ContentTarget.Component -> currentContentTarget.componentId
+            is ContentTarget.Flow -> currentContentTarget.flowId
+            null -> INITIAL_FLOW_ID
+        }
     val showTopBar = currentScreen != AppScreen.Login
-    val isCurrentMsisdnReady = readyMsisdn == msisdnWithPrefix
     val isLoginInitializing = pendingInitializationContext == InitializationContext.Login
     val isConfigInitializing = pendingInitializationContext == InitializationContext.Config
+
+    LaunchedEffect(currentScreen, currentEntryId) {
+        onDebugSnapshot("${currentScreen.name.lowercase()}|$currentEntryId")
+        if (currentScreen == AppScreen.Home && homeShownAt == null) {
+            homeShownAt = TimeSource.Monotonic.markNow()
+            val homeSnapshot =
+                buildLatencyLog(
+                    label = "home_first_frame",
+                    startMark = loginTappedAt,
+                    extra = "currentEntryId=$currentEntryId",
+                )
+            logSdk(SDK_TAG, homeSnapshot)
+            onDebugSnapshot(homeSnapshot)
+        }
+    }
+
+    LaunchedEffect(currentScreen, selectedMsisdn) {
+        if (currentScreen != AppScreen.Home) {
+            homeFrameCount = 0
+            return@LaunchedEffect
+        }
+
+        homeFrameCount = 0
+        while (currentScreen == AppScreen.Home && navbarReadyAt == null) {
+            withFrameNanos {
+                homeFrameCount += 1
+            }
+        }
+    }
 
     val startSdkForMsisdn: (String, InitializationContext) -> Unit = start@{ targetMsisdn, context ->
         if (pendingInitializationContext != null) {
@@ -142,8 +195,7 @@ private fun WaveSdkSampleApp() {
 
         pendingInitializationContext = context
         startupError = null
-        isNavbarReadyToUnblockContent = false
-        componentStack.clear()
+        contentTargetStack.clear()
 
         runCatching {
             FlowWrapper.start(
@@ -152,13 +204,13 @@ private fun WaveSdkSampleApp() {
                 onReady = {
                     readyMsisdn = targetMsisdnWithPrefix
                     pendingInitializationContext = null
+                    if (context == InitializationContext.Login) {
+                        currentScreen = AppScreen.Home
+                    }
                     logSdk(
                         SDK_TAG,
                         "SDK ready with FlowWrapper.start(apiKey, msisdn=$targetMsisdnWithPrefix)",
                     )
-                    if (context == InitializationContext.Login) {
-                        currentScreen = AppScreen.Home
-                    }
                 },
             )
         }.onSuccess {
@@ -173,164 +225,255 @@ private fun WaveSdkSampleApp() {
         }
     }
 
-    NativeBackHandler(enabled = currentScreen == AppScreen.Config || currentComponentId != null) {
+    NativeBackHandler(enabled = currentScreen == AppScreen.Config || currentContentTarget != null) {
         when {
             currentScreen == AppScreen.Config && !isConfigInitializing -> {
                 isDropdownExpanded = false
                 currentScreen = AppScreen.Home
             }
 
-            currentComponentId != null -> {
+            currentContentTarget != null -> {
                 popComponentFromHostStack(
-                    componentStack = componentStack,
+                    contentTargetStack = contentTargetStack,
                     reason = "native back button",
                 )
             }
         }
     }
 
-    if (!showTopBar) {
-        LoginScreen(
-            draftName = draftName,
-            onDraftNameChange = { draftName = it },
-            draftPassword = draftPassword,
-            onDraftPasswordChange = { draftPassword = it },
-            onLogin = {
-                userName = draftName.ifBlank { "Usuario" }.trim()
-                startupError = null
-                startSdkForMsisdn(selectedMsisdn, InitializationContext.Login)
-            },
-            isLoading = isLoginInitializing,
-            errorMessage = startupError,
-        )
-        return
-    }
-
-    Scaffold(
-        topBar = {
-            AppTopBar(
-                userName = userName,
-                selectedMsisdn = msisdnWithPrefix,
-                currentScreen = currentScreen,
-                onOpenConfig = {
-                    isDropdownExpanded = false
-                    currentScreen = AppScreen.Config
-                },
-                onCloseConfig = {
-                    if (!isConfigInitializing) {
-                        isDropdownExpanded = false
-                        currentScreen = AppScreen.Home
-                    }
-                },
-                configNavigationEnabled = !isConfigInitializing,
-            )
-        },
-    ) { innerPadding ->
-        when (currentScreen) {
-            AppScreen.Login -> Unit
-            AppScreen.Config -> {
-                ConfigScreen(
-                    contentPadding = innerPadding,
-                    options = msisdnOptions,
-                    selectedMsisdn = selectedMsisdn,
-                    expanded = isDropdownExpanded,
-                    onSelectionChange = { updatedMsisdn ->
-                        isDropdownExpanded = false
-                        if (updatedMsisdn != selectedMsisdn) {
-                            selectedMsisdn = updatedMsisdn
-                            startSdkForMsisdn(updatedMsisdn, InitializationContext.Config)
-                        }
-                    },
-                    onExpandedChange = { isDropdownExpanded = it },
-                    onLogout = {
-                        isDropdownExpanded = false
-                        userName = ""
-                        draftName = ""
-                        draftPassword = ""
-                        pendingInitializationContext = null
-                        readyMsisdn = null
-                        startupError = null
-                        isNavbarReadyToUnblockContent = false
-                        componentStack.clear()
-                        currentScreen = AppScreen.Login
-                    },
-                    isLoading = isConfigInitializing,
-                    errorMessage = startupError,
-                )
-            }
-
-            AppScreen.Home -> Box(
+    Box(
+        modifier =
+            Modifier
+                .fillMaxSize(),
+    ) {
+        if (!showTopBar) {
+            Box(
                 modifier =
                     Modifier
                         .fillMaxSize()
-                        .padding(innerPadding),
+                        .safeDrawingPadding(),
             ) {
-                when {
-                    startupError != null -> Text(
-                        text = "Initialization error: $startupError",
-                        modifier = Modifier.align(Alignment.Center),
-                    )
-
-                    !isCurrentMsisdnReady -> Box(modifier = Modifier.fillMaxSize())
-                    else -> key(msisdnWithPrefix) {
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            key(NAVBAR_FLOW_ID) {
-                                RenderBlock(
-                                    flowId = NAVBAR_FLOW_ID,
-                                    modifier =
-                                        Modifier
-                                            .align(Alignment.BottomStart)
-                                            .fillMaxWidth()
-                                            .height(NAVBAR_HEIGHT),
-                                    onEvent = { event ->
-                                        handleSdkEvent(
-                                            event = event,
-                                            currentComponentId = currentComponentId,
-                                            componentStack = componentStack,
-                                            source = RenderSource.Navbar,
-                                        )
-                                        if (event is SDKEvent.ComponentLoaded || event is SDKEvent.Error) {
-                                            isNavbarReadyToUnblockContent = true
-                                        }
-                                    },
-                                )
+                LoginScreen(
+                    draftName = draftName,
+                    onDraftNameChange = { draftName = it },
+                    draftPassword = draftPassword,
+                    onDraftPasswordChange = { draftPassword = it },
+                    onLogin = {
+                        userName = draftName.ifBlank { "Usuario" }.trim()
+                        loginTappedAt = TimeSource.Monotonic.markNow()
+                        homeShownAt = null
+                        navbarReadyAt = null
+                        navbarFirstLayoutFrame = null
+                        homeFrameCount = 0
+                        val loginSnapshot =
+                            buildLatencyLog(
+                                label = "login_tapped",
+                                startMark = loginTappedAt,
+                            )
+                        logSdk(SDK_TAG, loginSnapshot)
+                        onDebugSnapshot(loginSnapshot)
+                        startupError = null
+                        startSdkForMsisdn(selectedMsisdn, InitializationContext.Login)
+                    },
+                    isLoading = isLoginInitializing,
+                    errorMessage = startupError,
+                )
+            }
+        } else {
+            Scaffold(
+                contentWindowInsets = WindowInsets(0.dp),
+                topBar = {
+                    AppTopBar(
+                        userName = userName,
+                        selectedMsisdn = msisdnWithPrefix,
+                        currentScreen = currentScreen,
+                        onOpenConfig = {
+                            isDropdownExpanded = false
+                            currentScreen = AppScreen.Config
+                        },
+                        onCloseConfig = {
+                            if (!isConfigInitializing) {
+                                isDropdownExpanded = false
+                                currentScreen = AppScreen.Home
                             }
+                        },
+                        configNavigationEnabled = !isConfigInitializing,
+                    )
+                },
+            ) { innerPadding ->
+                when (currentScreen) {
+                    AppScreen.Login -> Unit
+                    AppScreen.Config -> {
+                        ConfigScreen(
+                            contentPadding = innerPadding,
+                            options = msisdnOptions,
+                            selectedMsisdn = selectedMsisdn,
+                            expanded = isDropdownExpanded,
+                            onSelectionChange = { updatedMsisdn ->
+                                isDropdownExpanded = false
+                                if (updatedMsisdn != selectedMsisdn) {
+                                    selectedMsisdn = updatedMsisdn
+                                    startSdkForMsisdn(updatedMsisdn, InitializationContext.Config)
+                                }
+                            },
+                            onExpandedChange = { isDropdownExpanded = it },
+                            onLogout = {
+                                isDropdownExpanded = false
+                                userName = ""
+                                draftName = ""
+                                draftPassword = ""
+                                pendingInitializationContext = null
+                                readyMsisdn = null
+                                startupError = null
+                                isNavbarReadyToUnblockContent = false
+                                contentTargetStack.clear()
+                                currentScreen = AppScreen.Login
+                            },
+                            isLoading = isConfigInitializing,
+                            errorMessage = startupError,
+                        )
+                    }
 
-                            if (isNavbarReadyToUnblockContent) {
-                                Column(
-                                    modifier =
-                                        Modifier
-                                            .fillMaxSize()
-                                            .padding(bottom = NAVBAR_HEIGHT),
-                                ) {
-                                    Box(modifier = Modifier.fillMaxSize()) {
-                                        key(currentEntryId) {
-                                            if (currentComponentId == null) {
-                                                RenderBlock(
-                                                    flowId = INITIAL_FLOW_ID,
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    onEvent = { event ->
-                                                        handleSdkEvent(
-                                                            event = event,
-                                                            currentComponentId = null,
-                                                            componentStack = componentStack,
-                                                            source = RenderSource.Content,
-                                                        )
+                    AppScreen.Home -> Box(
+                        modifier =
+                            Modifier
+                                .fillMaxSize()
+                                .padding(innerPadding),
+                    ) {
+                        val density = LocalDensity.current
+                        val navigationBarHeight =
+                            with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
+                        val navbarHostHeight = NAVBAR_HEIGHT + navigationBarHeight
+
+                        when {
+                            startupError != null -> Text(
+                                text = "Initialization error: $startupError",
+                                modifier = Modifier.align(Alignment.Center),
+                            )
+
+                            else -> key(msisdnWithPrefix) {
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    key(NAVBAR_FLOW_ID) {
+                                        Box(
+                                            modifier =
+                                                Modifier
+                                                    .align(Alignment.BottomStart)
+                                                    .fillMaxWidth()
+                                                    .height(navbarHostHeight)
+                                                    .onGloballyPositioned {
+                                                        if (navbarFirstLayoutFrame != null) return@onGloballyPositioned
+
+                                                        navbarFirstLayoutFrame = homeFrameCount
+                                                        val navbarLayoutSnapshot =
+                                                            buildFrameLog(
+                                                                label = "navbar_first_layout",
+                                                                frameCount = homeFrameCount,
+                                                                extra =
+                                                                    "homeFirstFrameMs=${homeShownAt?.elapsedNow()?.inWholeMilliseconds}",
+                                                            )
+                                                        logSdk(SDK_TAG, navbarLayoutSnapshot)
+                                                        onDebugSnapshot(navbarLayoutSnapshot)
                                                     },
-                                                )
-                                            } else {
-                                                RenderBlock(
-                                                    componentId = currentComponentId,
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    onEvent = { event ->
-                                                        handleSdkEvent(
-                                                            event = event,
-                                                            currentComponentId = currentComponentId,
-                                                            componentStack = componentStack,
-                                                            source = RenderSource.Content,
+                                            contentAlignment = Alignment.TopStart,
+                                        ) {
+                                            RenderBlock(
+                                                flowId = NAVBAR_FLOW_ID,
+                                                modifier =
+                                                    Modifier
+                                                        .fillMaxWidth()
+                                                        .height(NAVBAR_HEIGHT),
+                                                onEvent = { event ->
+                                                    handleSdkEvent(
+                                                        event = event,
+                                                        currentTarget = currentContentTarget,
+                                                        contentTargetStack = contentTargetStack,
+                                                        source = RenderSource.Navbar,
+                                                    )
+                                                    if (event is SDKEvent.ComponentLoaded || event is SDKEvent.Error) {
+                                                        if (navbarReadyAt == null) {
+                                                            navbarReadyAt = TimeSource.Monotonic.markNow()
+                                                            val navbarReadyFrame = homeFrameCount
+                                                            val navbarSnapshot =
+                                                                buildLatencyLog(
+                                                                    label = "navbar_ready",
+                                                                    startMark = loginTappedAt,
+                                                                    extra =
+                                                                        "event=${event::class.simpleName} homeFirstFrameMs=${homeShownAt?.elapsedNow()?.inWholeMilliseconds} " +
+                                                                            "homeFrame=$navbarReadyFrame firstLayoutFrame=$navbarFirstLayoutFrame",
+                                                                )
+                                                            val navbarFrameSnapshot =
+                                                                buildFrameLog(
+                                                                    label = "navbar_ready",
+                                                                    frameCount = navbarReadyFrame,
+                                                                    extra =
+                                                                        "event=${event::class.simpleName} firstLayoutFrame=$navbarFirstLayoutFrame",
+                                                                )
+                                                            logSdk(SDK_TAG, navbarSnapshot)
+                                                            onDebugSnapshot(navbarSnapshot)
+                                                            logSdk(SDK_TAG, navbarFrameSnapshot)
+                                                            onDebugSnapshot(navbarFrameSnapshot)
+                                                        }
+                                                        isNavbarReadyToUnblockContent = true
+                                                    }
+                                                },
+                                            )
+                                        }
+                                    }
+
+                                    Column(
+                                        modifier =
+                                            Modifier
+                                                .fillMaxSize()
+                                                .padding(bottom = navbarHostHeight),
+                                    ) {
+                                        Box(modifier = Modifier.fillMaxSize()) {
+                                            key(currentEntryId) {
+                                                when (currentContentTarget) {
+                                                    null -> {
+                                                        RenderBlock(
+                                                            flowId = INITIAL_FLOW_ID,
+                                                            modifier = Modifier.fillMaxSize(),
+                                                            onEvent = { event ->
+                                                                handleSdkEvent(
+                                                                    event = event,
+                                                                    currentTarget = null,
+                                                                    contentTargetStack = contentTargetStack,
+                                                                    source = RenderSource.Content,
+                                                                )
+                                                            },
                                                         )
-                                                    },
-                                                )
+                                                    }
+
+                                                    is ContentTarget.Flow -> {
+                                                        RenderBlock(
+                                                            flowId = currentContentTarget.flowId,
+                                                            modifier = Modifier.fillMaxSize(),
+                                                            onEvent = { event ->
+                                                                handleSdkEvent(
+                                                                    event = event,
+                                                                    currentTarget = currentContentTarget,
+                                                                    contentTargetStack = contentTargetStack,
+                                                                    source = RenderSource.Content,
+                                                                )
+                                                            },
+                                                        )
+                                                    }
+
+                                                    is ContentTarget.Component -> {
+                                                        RenderBlock(
+                                                            componentId = currentContentTarget.componentId,
+                                                            modifier = Modifier.fillMaxSize(),
+                                                            onEvent = { event ->
+                                                                handleSdkEvent(
+                                                                    event = event,
+                                                                    currentTarget = currentContentTarget,
+                                                                    contentTargetStack = contentTargetStack,
+                                                                    source = RenderSource.Content,
+                                                                )
+                                                            },
+                                                        )
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -341,6 +484,7 @@ private fun WaveSdkSampleApp() {
                 }
             }
         }
+
     }
 }
 
@@ -545,6 +689,20 @@ private fun ConfigScreen(
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = "SDK snapshot build",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = FlowsSdkBuildInfo.DESCRIPTION,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
         Spacer(modifier = Modifier.height(24.dp))
         Button(
             onClick = onLogout,
@@ -558,6 +716,42 @@ private fun ConfigScreen(
 
 private fun logRenderEvent(flowId: String): (SDKEvent) -> Unit = { event ->
     logSdk(SDK_TAG, "$flowId event=${event::class.simpleName}")
+}
+
+private fun buildLatencyLog(
+    label: String,
+    startMark: TimeMark?,
+    extra: String? = null,
+): String {
+    val elapsedMs = startMark?.elapsedNow()?.inWholeMilliseconds
+    return buildString {
+        append("timing ")
+        append(label)
+        append('=')
+        append(elapsedMs?.toString() ?: "unknown")
+        append("ms")
+        if (!extra.isNullOrBlank()) {
+            append(' ')
+            append(extra)
+        }
+    }
+}
+
+private fun buildFrameLog(
+    label: String,
+    frameCount: Int?,
+    extra: String? = null,
+): String {
+    return buildString {
+        append("frames ")
+        append(label)
+        append('=')
+        append(frameCount?.toString() ?: "unknown")
+        if (!extra.isNullOrBlank()) {
+            append(' ')
+            append(extra)
+        }
+    }
 }
 
 @Composable
@@ -638,8 +832,8 @@ private fun MsisdnSelectionBox(
 
 private fun handleSdkEvent(
     event: SDKEvent,
-    currentComponentId: String?,
-    componentStack: MutableList<String>,
+    currentTarget: ContentTarget?,
+    contentTargetStack: MutableList<ContentTarget>,
     source: RenderSource,
 ) {
     when (event) {
@@ -656,33 +850,41 @@ private fun handleSdkEvent(
 
         is SDKEvent.Callback -> {
             logSdk(SDK_TAG, "SDKEvent.Callback type=${event.type} payload=${event.payload}")
-            when (val action = resolveSdkHostAction(event, currentComponentId)) {
+            when (val action = resolveSdkHostAction(event, currentTarget)) {
                 is SdkHostAction.Navigate -> {
-                    if (source == RenderSource.Navbar && action.componentId in NAVBAR_COMPONENT_IDS) {
-                        componentStack.clear()
-                        componentStack += action.componentId
-                        logSdk(
-                            SDK_TAG,
-                            "Host navbar navigate replace componentId=${action.componentId}",
-                        )
+                    if (source == RenderSource.Navbar) {
+                        contentTargetStack.clear()
+                        if (action.target is ContentTarget.Flow && action.target.flowId == INITIAL_FLOW_ID) {
+                            logSdk(SDK_TAG, "Host navbar navigate reset to initial flowId=$INITIAL_FLOW_ID")
+                        } else {
+                            contentTargetStack += action.target
+                            logSdk(SDK_TAG, "Host navbar navigate replace target=${action.target.asLogLabel()}")
+                        }
                     } else {
-                        componentStack += action.componentId
+                        contentTargetStack += action.target
                         logSdk(
                             SDK_TAG,
-                            "Host navigate push componentId=${action.componentId} stackSize=${componentStack.size}",
+                            "Host navigate push target=${action.target.asLogLabel()} stackSize=${contentTargetStack.size}",
                         )
                     }
                 }
 
                 SdkHostAction.Back -> {
                     popComponentFromHostStack(
-                        componentStack = componentStack,
+                        contentTargetStack = contentTargetStack,
                         reason = "SDK callback",
                     )
                 }
 
                 is SdkHostAction.OpenExternal -> {
                     logSdk(SDK_TAG, "Host external navigation requested url=${action.url}")
+                }
+
+                is SdkHostAction.BlockedNavigation -> {
+                    logSdk(
+                        SDK_TAG,
+                        "Host blocked navigation target=${action.targetId} (temporary sample safeguard)",
+                    )
                 }
 
                 SdkHostAction.None -> Unit
@@ -693,7 +895,7 @@ private fun handleSdkEvent(
 
 private fun resolveSdkHostAction(
     event: SDKEvent.Callback,
-    currentComponentId: String?,
+    currentTarget: ContentTarget?,
 ): SdkHostAction {
     val normalizedType = event.type.lowercase()
     val callbackPayload = extractJsonObjectField(event.payload, "payload") ?: event.payload
@@ -707,22 +909,23 @@ private fun resolveSdkHostAction(
             ?: extractJsonStringField(callbackPayload, "externalUrl")
 
     if (normalizedType == "render_block_navigate") {
-        return when (payloadActionType) {
-            "navigation" -> {
-                if (!nextComponentId.isNullOrBlank() && nextComponentId != currentComponentId) {
-                    SdkHostAction.Navigate(nextComponentId)
+        return when {
+            !nextComponentId.isNullOrBlank() -> {
+                if (nextComponentId in TEMP_BLOCKED_TARGET_IDS) {
+                    return SdkHostAction.BlockedNavigation(nextComponentId)
+                }
+                val nextTarget = resolveContentTarget(nextComponentId)
+                if (nextTarget != null && nextTarget.id() != currentTarget.idOrNull()) {
+                    SdkHostAction.Navigate(nextTarget)
                 } else {
                     SdkHostAction.None
                 }
             }
 
-            "back", "close" -> SdkHostAction.Back
-            "external" -> {
-                if (!externalUrl.isNullOrBlank()) {
-                    SdkHostAction.OpenExternal(externalUrl)
-                } else {
-                    SdkHostAction.None
-                }
+            payloadActionType in setOf("back", "close") -> SdkHostAction.Back
+
+            payloadActionType == "external" && !externalUrl.isNullOrBlank() -> {
+                SdkHostAction.OpenExternal(externalUrl)
             }
 
             else -> SdkHostAction.None
@@ -737,14 +940,39 @@ private fun resolveSdkHostAction(
 }
 
 private fun popComponentFromHostStack(
-    componentStack: MutableList<String>,
+    contentTargetStack: MutableList<ContentTarget>,
     reason: String,
 ) {
-    val popped = componentStack.removeLastOrNull()
+    val popped = contentTargetStack.removeLastOrNull()
     logSdk(
         SDK_TAG,
-        "Host back requested by $reason, popped component=$popped stackSize=${componentStack.size}",
+        "Host back requested by $reason, popped target=${popped?.asLogLabel()} stackSize=${contentTargetStack.size}",
     )
+}
+
+private fun resolveContentTarget(
+    nextComponentId: String?,
+): ContentTarget? {
+    val normalizedComponentId = nextComponentId?.trim().orEmpty()
+    if (normalizedComponentId.isNotEmpty()) {
+        return when (normalizedComponentId) {
+            "home-screen-1" -> ContentTarget.Flow(INITIAL_FLOW_ID)
+            else -> ContentTarget.Component(normalizedComponentId)
+        }
+    }
+    return null
+}
+
+private fun ContentTarget.id(): String = when (this) {
+    is ContentTarget.Component -> componentId
+    is ContentTarget.Flow -> flowId
+}
+
+private fun ContentTarget?.idOrNull(): String? = this?.id()
+
+private fun ContentTarget.asLogLabel(): String = when (this) {
+    is ContentTarget.Component -> "component:$componentId"
+    is ContentTarget.Flow -> "flow:$flowId"
 }
 
 private fun extractJsonObjectField(json: String, fieldName: String): String? {

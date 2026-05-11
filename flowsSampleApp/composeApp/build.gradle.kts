@@ -1,7 +1,7 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
-val flowWrapperVersion = "0.5.9"
+val flowWrapperVersion = "0.5.11"
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -33,6 +33,12 @@ kotlin {
             implementation(libs.androidx.activity.compose)
             implementation("androidx.compose.material:material-icons-extended:1.7.8")
         }
+        androidInstrumentedTest.dependencies {
+            implementation(libs.androidx.testExt.junit)
+            implementation(libs.androidx.uiautomator)
+            implementation(libs.junit)
+            implementation("androidx.test:runner:1.6.2")
+        }
         commonMain.dependencies {
             implementation(libs.compose.runtime)
             implementation(libs.compose.foundation)
@@ -42,7 +48,7 @@ kotlin {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.androidx.lifecycle.viewmodelCompose)
             implementation(libs.androidx.lifecycle.runtimeCompose)
-            implementation("br.com.wave:flow-wrapper-kmp:$flowWrapperVersion")
+            implementation("br.com.wave:flows-sdk:$flowWrapperVersion")
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
@@ -81,6 +87,7 @@ android {
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 1
         versionName = "1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     packaging {
         resources {
